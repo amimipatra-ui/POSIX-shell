@@ -1,4 +1,5 @@
 #include <csignal>
+#include <cstddef>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -220,7 +221,7 @@ void cmd_jobs(const std::vector<Job> &jobs){
     for(int i = 0; i < jobs.size(); i++){
         std::cout << "[" << i + 1 << "]"
         << (jobs[i].stopped ? "stopped" : "running")
-        << " " << jobs[i].command << "\n";
+        << " " << jobs[i].command << std::endl;
     }
 }
 
@@ -274,6 +275,68 @@ void cmd_bg(std::vector<Job> &jobs, const std::vector<std::string> &args){
             jobs[idx].stopped = false;
             kill(jobs[idx].pid, SIGCONT);
             std::cout << "[" << idx + 1 << "]" << jobs[idx].command << "\n";
+}
+
+std::vector<std::string> get_path_executables(const std::string &prefix){
+    std::vector<std::string> matches;
+    const char *path_env = getenv("PATH");
+    if(!path_env) return matches;
+
+    std::stringstream ss(path_env);
+    std::string dir;
+    while(std::getline(ss,dir,':')){
+        std::error_code ec;
+        if(!fs::exists(dir,ec) || !fs::is_directory(dir,ec)) continue;
+
+        for(const auto &entry: fs::directory_iterator(dir,ec)){
+            if(ec) break;
+            std::string name = entry.path().filename().string();
+            if(name.compare(0,prefix.size(),prefix) == 0){
+                std::error_code perm_ec;
+                auto perms = fs::status(entry.path(), perm_ec).permissions();
+                if(!perm_ec && (perms & fs::perms::owner_exec) != fs::perms::none){
+                    matches.push_back(name);
+                }
+            }
+        }
+    }
+    return matches;
+}
+
+char *command_generator(const char * text, int state){
+    static std::vector<std::string> matches;
+    static size_t idx;
+
+    if(state == 0){
+        idx = 0;
+        matches.clear();
+        std::string prefix(text);
+
+        static std::vector<std::string> builtins = {"cd","jobs","fg","bg","exit","quit"};
+        for(const auto &b: builtins){
+            if(b.compare(0,prefix.size(),prefix) == 0)
+            matches.push_back(b);
+        }
+        auto path_matches = get_path_executables(prefix);
+        matches.insert(matches.end(), path_matches.begin(), path_matches.end());
+    }
+    if(idx < matches.size()){
+        return strdup(matches[idx++].c_str());
+    }
+    return nullptr;
+}
+
+char **shell_completion(const char *text, int start, int end){
+    if(start == 0){
+        return rl_completion_matches(text,command_generator);
+    }
+    return nullptr;
+}
+
+std::string get_hisotry_path(){
+    const char *home = getenv("HOME");
+    if(!home) return ".shell_hisotry";
+    return std::string (home) + "/.shell_history";
 }
 
 void run_external(std::vector<std::string> &args, std::vector<Job> &jobs){
@@ -345,15 +408,26 @@ int main(){
 
     signal(SIGTSTP, SIG_IGN);    
     signal(SIGTTOU, SIG_IGN);    
-    signal(SIGTTIN, SIG_IGN);    
-
+    signal(SIGTTIN, SIG_IGN);   
+    
+    std::string hisotry_path = get_hisotry_path();
+    rl_attempted_completion_function = shell_completion;
     read_history(".shell_history");
+    stifle_history(1000); 
 
     std::string command;
     std::vector<Job> jobs;
     while(command != "quit" && command != "exit"){
-        std::cout << fetch_username() << fetch_branch() << " > ";
-        std::getline(std::cin,command);
+        std::string prompt = fetch_username() + fetch_branch() + " > ";
+        char *line = readline(prompt.c_str());
+        if(!line){
+            std::cout << "\n";
+            break;
+        }
+        command = line;
+        if(!command.empty())
+            add_history(line);
+        free(line);
         if(command.empty())
             continue;
         std::vector<std::string> args = tokenizer(command);
@@ -381,6 +455,6 @@ int main(){
             std::cout << "\n";
         }
     }
-    write_history(".shell_history");
+    write_history(hisotry_path.c_str());
     return 0;
 }

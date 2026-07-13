@@ -10,6 +10,7 @@ a POSIX shell implementation written in c++17;
 - pipes & I/O redirections (`ls | grep .cpp | wc - l`) (`>`, `>>`, `<`)
 - signal handling (`Ctrl + C` survives)
 - job control (`sleep 200 &`)
+- tab autocompletion & history
 - `cd` builtin with home direc support
 - git branch display in prompt
 
