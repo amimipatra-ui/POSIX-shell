@@ -11,6 +11,7 @@ a POSIX shell implementation written in c++17;
 - signal handling (`Ctrl + C` survives)
 - job control (`sleep 200 &`)
 - tab autocompletion & history
+- support for expanding environment var(eg `$HOME` , `USER`) in command args.
 - `cd` builtin with home direc support
 - git branch display in prompt
 

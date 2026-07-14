@@ -333,6 +333,14 @@ char **shell_completion(const char *text, int start, int end){
     return nullptr;
 }
 
+std::string expand_env(const std::string &token){
+    if(token.empty() || token[0] != '$') return token;
+
+    std::string var_name = token.substr(1);
+    const char *val = getenv(var_name.c_str());
+    return val ? std::string(val) : "";
+}
+
 std::string get_hisotry_path(){
     const char *home = getenv("HOME");
     if(!home) return ".shell_hisotry";
@@ -433,6 +441,9 @@ int main(){
         std::vector<std::string> args = tokenizer(command);
         if(args.empty()){
             continue;
+        }
+        for(auto &a: args){
+            a = expand_env(a);
         }
         if(args[0] == "cd"){
             cmd_cd(args);
