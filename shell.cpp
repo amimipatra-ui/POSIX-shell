@@ -16,6 +16,8 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 
+int last_exit_status = 0;
+
 namespace fs = std::filesystem;
 
 void handle_sigint(int sig);
@@ -336,6 +338,10 @@ char **shell_completion(const char *text, int start, int end){
 std::string expand_env(const std::string &token){
     if(token.empty() || token[0] != '$') return token;
 
+    if(token == "$?"){
+        return std::to_string(last_exit_status);
+    }
+
     std::string var_name = token.substr(1);
     const char *val = getenv(var_name.c_str());
     return val ? std::string(val) : "";
@@ -390,6 +396,10 @@ void run_external(std::vector<std::string> &args, std::vector<Job> &jobs){
         signal(SIGTSTP, SIG_IGN);
         int status;
         waitpid(pid, &status, WUNTRACED);
+
+        if(WIFEXITED(status)){
+            last_exit_status = WEXITSTATUS(status);
+        }
 
         tcsetpgrp(STDIN_FILENO, getpid());
 
