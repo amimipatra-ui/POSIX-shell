@@ -13,6 +13,7 @@ a POSIX shell implementation written in c++17;
 - tab autocompletion & history
 - support for expanding environment var(eg `$HOME` , `USER`) in command args.
 - exit status tracking (`$?`)
+- allias builtin
 - `cd` builtin with home direc support
 - git branch display in prompt
 

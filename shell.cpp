@@ -15,6 +15,7 @@
 #include <termios.h>
 #include <readline/readline.h>
 #include <readline/history.h>
+#include <unordered_map>
 
 int last_exit_status = 0;
 
@@ -353,6 +354,30 @@ std::string get_hisotry_path(){
     return std::string (home) + "/.shell_history";
 }
 
+std::unordered_map<std::string, std::string> aliases;
+
+void cmd_alias(const std::vector<std::string> &args){
+    if(args.size() < 2){
+        for(const auto &[name, value] : aliases){
+            std::cout << name << "='" << value << "'\n";
+        }
+        return;
+    }
+    std::string rest;
+    for(size_t i = 1; i < args.size(); i++){
+        rest += args[i];
+        if(i != args.size() - 1) rest += " ";
+    }
+    size_t eq = rest.find('=');
+    if(eq == std::string::npos){
+        std::cerr << "alias: invalid syntax\n";
+        return;
+    }
+    std::string name = rest.substr(0, eq);
+    std::string value = rest.substr(eq + 1);
+    aliases[name] = value;
+}
+
 void run_external(std::vector<std::string> &args, std::vector<Job> &jobs){
     bool background = false;
     if(!args.empty() && args.back() == "&"){
@@ -455,6 +480,15 @@ int main(){
         for(auto &a: args){
             a = expand_env(a);
         }
+        if(args[0] == "alias"){
+        cmd_alias(args);
+        continue;
+        }
+        if(aliases.count(args[0])){
+        std::vector<std::string> expanded = tokenizer(aliases[args[0]]);
+        args = expanded; 
+        }
+
         if(args[0] == "cd"){
             cmd_cd(args);
             continue;
