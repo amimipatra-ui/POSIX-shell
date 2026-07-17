@@ -378,6 +378,22 @@ void cmd_alias(const std::vector<std::string> &args){
     aliases[name] = value;
 }
 
+void cmd_export(const std::vector<std::string> &args){
+    if(args.size() < 2){
+        std::cerr << "export: usage: export NAME=VALUE\n";
+        return;
+    }
+    std::string rest = args[1];
+    size_t eq = rest.find('=');
+    if(eq == std::string::npos){
+        std::cerr << "export: invalid syntax\n";
+        return;
+    }
+    std::string name = rest.substr(0, eq);
+    std::string value = rest.substr(eq + 1);
+    setenv(name.c_str(), value.c_str(), 1);
+}
+
 void run_external(std::vector<std::string> &args, std::vector<Job> &jobs){
     bool background = false;
     if(!args.empty() && args.back() == "&"){
@@ -484,6 +500,10 @@ int main(){
         cmd_alias(args);
         continue;
         }
+        if(args[0] == "export"){
+        cmd_export(args);
+        continue;
+}
         if(aliases.count(args[0])){
         std::vector<std::string> expanded = tokenizer(aliases[args[0]]);
         args = expanded; 
