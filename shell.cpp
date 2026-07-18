@@ -394,6 +394,22 @@ void cmd_export(const std::vector<std::string> &args){
     setenv(name.c_str(), value.c_str(), 1);
 }
 
+void cmd_echo(const std::vector<std::string> &args){
+    bool newline = true;
+    size_t start = 1;
+
+    if(args.size() > 1 && args[1] == "-n"){
+        newline = false;
+        start = 2;
+    }
+
+    for(size_t i = start; i < args.size(); i++){
+        std::cout << args[i];
+        if(i != args.size() - 1) std::cout << " ";
+    }
+    if(newline) std::cout << "\n";
+}
+
 void run_external(std::vector<std::string> &args, std::vector<Job> &jobs){
     bool background = false;
     if(!args.empty() && args.back() == "&"){
@@ -502,6 +518,10 @@ int main(){
         }
         if(args[0] == "export"){
         cmd_export(args);
+        continue;
+        }
+        if(args[0] == "echo"){
+        cmd_echo(args);
         continue;
 }
         if(aliases.count(args[0])){

@@ -15,6 +15,7 @@ a POSIX shell implementation written in c++17;
 - exit status tracking (`$?`)
 - allias builtin
 - export builtin
+- echo builtin (with `-n` flag)
 - `cd` builtin with home direc support
 - git branch display in prompt
 
