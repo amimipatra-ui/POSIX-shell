@@ -410,6 +410,14 @@ void cmd_echo(const std::vector<std::string> &args){
     if(newline) std::cout << "\n";
 }
 
+void cmd_unset(const std::vector<std::string> &args){
+    if(args.size() < 2){
+        std::cerr << "unset: usage: unset NAME\n";
+        return;
+    }
+    unsetenv(args[1].c_str());
+}
+
 void run_external(std::vector<std::string> &args, std::vector<Job> &jobs){
     bool background = false;
     if(!args.empty() && args.back() == "&"){
@@ -523,7 +531,11 @@ int main(){
         if(args[0] == "echo"){
         cmd_echo(args);
         continue;
-}
+        }
+        if(args[0] == "unset"){
+        cmd_unset(args);
+        continue;
+        }
         if(aliases.count(args[0])){
         std::vector<std::string> expanded = tokenizer(aliases[args[0]]);
         args = expanded; 

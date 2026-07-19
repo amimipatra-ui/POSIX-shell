@@ -16,6 +16,7 @@ a POSIX shell implementation written in c++17;
 - allias builtin
 - export builtin
 - echo builtin (with `-n` flag)
+- unset builtin
 - `cd` builtin with home direc support
 - git branch display in prompt
 
