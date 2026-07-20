@@ -418,6 +418,11 @@ void cmd_unset(const std::vector<std::string> &args){
     unsetenv(args[1].c_str());
 }
 
+void cmd_whoami(){
+    const char *user = getenv("USER");
+    std::cout << (user ? user : "unknown") << "\n";
+}
+
 void run_external(std::vector<std::string> &args, std::vector<Job> &jobs){
     bool background = false;
     if(!args.empty() && args.back() == "&"){
@@ -534,6 +539,10 @@ int main(){
         }
         if(args[0] == "unset"){
         cmd_unset(args);
+        continue;
+        }
+        if(args[0] == "whoami"){
+        cmd_whoami();
         continue;
         }
         if(aliases.count(args[0])){
