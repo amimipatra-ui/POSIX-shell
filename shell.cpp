@@ -1,72 +1,56 @@
-#include <csignal>
-#include <cstddef>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
-#include <filesystem>
 #include <sstream>
 #include <string>
+#include <filesystem>
 #include <sys/wait.h>
 #include <system_error>
 #include <unistd.h>
-#include <fcntl.h>
 #include <vector>
-#include <signal.h>
-#include <termios.h>
-#include <readline/readline.h>
-#include <readline/history.h>
-#include <unordered_map>
-
-int last_exit_status = 0;
+#include <fcntl.h>
 
 namespace fs = std::filesystem;
 
-void handle_sigint(int sig);
-
-std::string fetch_username(){
-    fs::path curr_path = fs::current_path();
+std::string fetch_path(){
+    fs::path current_file = fs::current_path();
     fs::path chopped_path;
     int count = 0;
-    for(const auto &path: curr_path){
+    for(const auto &path: current_file){
         if(!path.empty() && path != "/"){
             chopped_path /= path;
             count++;
-            if(count == 2)
-            break;
+            if(count == 2) break;
         }
     }
-    return chopped_path;
+    return chopped_path.string();
 }
 
 std::string fetch_branch(){
-    fs::path curr_path = fs::current_path();
+    fs::path current_path = fs::current_path();
     while(true){
-        fs::path git_path = curr_path / ".git" / "HEAD";
+        fs::path git_path = current_path / ".git" / "HEAD";
         if(fs::exists(git_path)){
             std::ifstream head_file(git_path);
             if(head_file.is_open()){
                 std::string line;
-                if(std::getline(head_file,line)){  
-                while(!line.empty() && (line.back() == '\n' || line.back() == '\r' || line.back() == ' ')){
+                if(std::getline(head_file,line)){
+                    while(!line.empty() && (line.back() == '\n' || line.back() == '\r' || line.back() == ' ')){
                         line.pop_back();
                     }
                     if(line.rfind("ref: refs/heads/",0) == 0){
-                        return " ( " + line.substr(16) + " )";
+                        return " (" + line.substr(16) + ") ";
                     }
-                    return " (" + line.substr(0,7) + " )";
+                    return "(" + line.substr(0,7) + ")";
                 }
             }
         }
-        if(curr_path == curr_path.root_path() || curr_path.empty())
+        if(current_path == current_path.root_path() || current_path.empty()){
             break;
-        curr_path = curr_path.parent_path();
-    }
+        }
+    current_path = current_path.parent_path();
+    } 
     return std::string();
-}
-
-void handle_sigint(int sig){
-    std::cout << "\n" << fetch_username() << fetch_branch() << " > ";
-    std::cout.flush();
 }
 
 std::vector<std::string> tokenizer(const std::string &command){
@@ -78,19 +62,20 @@ std::vector<std::string> tokenizer(const std::string &command){
     return args;
 }
 
-void cmd_cd(const std::vector<std::string> &args){
+void cmd_cd(const std::vector<std::string> args){
     if(args.size() < 2){
-        const char* home = getenv("HOME");
-        if(!home) {std::cerr << "home not found \n";}
+        const char *home = getenv("HOME");
+        if(!home){std::cerr << "home not found";}
         std::error_code ec;
         fs::current_path(home,ec);
-        if(ec) {std::cerr << "cd: " << ec.message() << "\n";}
+        if(ec) {std::cerr << "cd: " << ec.message() << "not found";}
         return;
     }
-    fs::path target_path = args[1];
+
+    fs::path target = args[1];
     std::error_code ec;
-    fs::current_path(target_path,ec);
-    if(ec) {std::cerr << "cd: " << ec.message() << "\n";}
+    fs::current_path(target,ec);
+    if(ec) {std::cerr << "cd: " << ec.message() << "not found";}
 }
 
 struct Redirect{
@@ -103,14 +88,14 @@ Redirect parse_redirect(std::vector<std::string> &args){
     Redirect r;
     std::vector<std::string> clean;
     for(int i = 0; i < args.size(); i++){
-        if(args[i] == ">" && i + 1 < args.size()){
+        if(args[i] == ">" && i < args.size() - 1){
             r.out_file = args[++i];
         }
-        else if(args[i] == ">>" && i + 1 < args.size()){
+        else if(args[i] == ">>" && i < args.size()){
             r.out_file = args[++i];
             r.append = true;
         }
-        else if(args[i] == "<" && i + 1 < args.size()){
+        else if (args[i] == "<" && i < args.size()) {
             r.in_file = args[++i];
         }
         else{
@@ -121,17 +106,20 @@ Redirect parse_redirect(std::vector<std::string> &args){
     return r;
 }
 
-void apply_redirects(const Redirect r){
+void apply_redirects(Redirect r){
     if(!r.out_file.empty()){
         int flags = O_WRONLY | O_CREAT | (r.append ? O_APPEND : O_TRUNC);
-        int fd = open(r.out_file.c_str(),flags,0644);
-        if(fd < 0) {std::cerr << "failed to open"; _exit(1);}
+        int fd = open(r.out_file.c_str(), flags, 0677);
+        if(fd < 0) {std::cerr << "no command found";}
         dup2(fd, 1);
         close(fd);
     }
     if(!r.in_file.empty()){
         int fd = open(r.in_file.c_str(), O_RDONLY);
-        if(fd < 0) {std::cerr << "failed to open"; _exit(1);}
+        if(fd < 0) {
+        std::cerr << "cannot open " << r.in_file << ": " << strerror(errno) << "\n";
+        _exit(1);
+        }
         dup2(fd, 0);
         close(fd);
     }
@@ -141,50 +129,49 @@ std::vector<std::vector<std::string>> split_pipes(const std::vector<std::string>
     std::vector<std::vector<std::string>> commands;
     std::vector<std::string> current;
     for(const auto &tok: args){
-        if(tok == "|"){
-            if(!current.empty()){
+            if(tok == "|"){
                 commands.push_back(current);
                 current.clear();
+            }else{
+                current.push_back(tok);
             }
         }
-        else{
-            current.push_back(tok);
-        }
-    }
     if(!current.empty())
-    commands.push_back(current);
-        return commands;
+        commands.push_back(current);
+    return commands;
 }
 
-void run_pipeline(std::vector<std::vector<std::string>> &commands){
-    int numbers = commands.size();
+void run_pipeline(std::vector<std::vector<std::string>> commands ){
+    int size = commands.size();
     int fd[2];
     int prev_read = -1;
 
     std::vector<pid_t> pids;
 
-    for(int i = 0; i < numbers; i++){
+    for(int i = 0; i < size; i++){
         pipe(fd);
 
         pid_t pid = fork();
 
+        if(pid < 0) {std::cerr << "fork faled";}
+
         if(pid == 0){
             if(prev_read != -1){
-                dup2(prev_read,0);
-                close(prev_read);
+                dup2(prev_read, 0);
+                close(prev_read);;
             }
-            if(i < numbers - 1){
+            if(i < size - 1){
                 dup2(fd[1], 1);
             }
-            close(fd[1]);
             close(fd[0]);
+            close(fd[1]);
 
             Redirect r = parse_redirect(commands[i]);
             apply_redirects(r);
 
             std::vector<char *> argv;
             for(const auto &a: commands[i]){
-                argv.push_back(const_cast<char *>(a.c_str()));
+                argv.push_back(const_cast<char*>(a.c_str()));
             }
             argv.push_back(nullptr);
 
@@ -194,376 +181,55 @@ void run_pipeline(std::vector<std::vector<std::string>> &commands){
         }
         else{
             pids.push_back(pid);
-            if(prev_read != -1) 
-                close(prev_read);
+            if(prev_read != -1) close(prev_read);
             close(fd[1]);
             prev_read = fd[0];
         }
     }
-    if(prev_read != -1) close(prev_read);
-
-    signal(SIGINT, SIG_IGN);
-    for(pid_t pid: pids){
+        for(pid_t pid : pids){
         int status;
         waitpid(pid, &status, 0);
     }
-    signal(SIGINT, handle_sigint);
 }
 
-struct Job{
-    pid_t pid;
-    std::string command;
-    bool stopped;
-};
-
-void cmd_jobs(const std::vector<Job> &jobs){
-    if(jobs.empty()){
-        std::cout << "no jobs \n";
-        return;
-    }
-    for(int i = 0; i < jobs.size(); i++){
-        std::cout << "[" << i + 1 << "]"
-        << (jobs[i].stopped ? "stopped" : "running")
-        << " " << jobs[i].command << std::endl;
-    }
-}
-
-void cmd_fg(std::vector<Job> &jobs, const std::vector<std::string> &args){
-    if(jobs.empty()) {std::cerr << "fg: no jobs \n"; return;}
-
-    int idx = jobs.size() - 1;
-    if(args.size() >= 2)
-        idx = std::stoi(args[1]) - 1;
-
-    if(idx < 0 || idx >= (int)jobs.size()){
-        std::cerr << "fg: no such job\n";
-        return;
-    }
-
-    Job j = jobs[idx];
-    jobs.erase(jobs.begin() + idx);
-
-    std::cout << j.command << "\n";
-    tcsetpgrp(STDIN_FILENO, j.pid);
-    kill(j.pid,SIGCONT);
-
-    signal(SIGINT,SIG_IGN);
-    signal(SIGTSTP, SIG_IGN);
-    int status;
-    waitpid(j.pid, &status, WUNTRACED);
-
-    tcsetpgrp(STDIN_FILENO, getpid());
-
-    if(WIFSTOPPED(status)){
-        j.stopped = true;
-        jobs.push_back(j);
-        std::cout << "\n[" << jobs.size() << "] stopped " << j.command << "\n";
-    }
-    signal(SIGINT, handle_sigint);
-    signal(SIGTSTP, SIG_IGN);
-}
-
-void cmd_bg(std::vector<Job> &jobs, const std::vector<std::string> &args){
-    if(jobs.empty()) {std::cerr << "no jobs found \n"; return;}
-
-    int idx = jobs.size() - 1;
-    if(args.size() >= 2)
-        idx = std::stoi(args[1]) - 1;
-
-            if(idx < 0 || idx >= (int) jobs.size()){
-                std::cerr << "bg: no such job\n";
-                return;
-            }
-
-            jobs[idx].stopped = false;
-            kill(jobs[idx].pid, SIGCONT);
-            std::cout << "[" << idx + 1 << "]" << jobs[idx].command << "\n";
-}
-
-std::vector<std::string> get_path_executables(const std::string &prefix){
-    std::vector<std::string> matches;
-    const char *path_env = getenv("PATH");
-    if(!path_env) return matches;
-
-    std::stringstream ss(path_env);
-    std::string dir;
-    while(std::getline(ss,dir,':')){
-        std::error_code ec;
-        if(!fs::exists(dir,ec) || !fs::is_directory(dir,ec)) continue;
-
-        for(const auto &entry: fs::directory_iterator(dir,ec)){
-            if(ec) break;
-            std::string name = entry.path().filename().string();
-            if(name.compare(0,prefix.size(),prefix) == 0){
-                std::error_code perm_ec;
-                auto perms = fs::status(entry.path(), perm_ec).permissions();
-                if(!perm_ec && (perms & fs::perms::owner_exec) != fs::perms::none){
-                    matches.push_back(name);
-                }
-            }
-        }
-    }
-    return matches;
-}
-
-char *command_generator(const char * text, int state){
-    static std::vector<std::string> matches;
-    static size_t idx;
-
-    if(state == 0){
-        idx = 0;
-        matches.clear();
-        std::string prefix(text);
-
-        static std::vector<std::string> builtins = {"cd","jobs","fg","bg","exit","quit"};
-        for(const auto &b: builtins){
-            if(b.compare(0,prefix.size(),prefix) == 0)
-            matches.push_back(b);
-        }
-        auto path_matches = get_path_executables(prefix);
-        matches.insert(matches.end(), path_matches.begin(), path_matches.end());
-    }
-    if(idx < matches.size()){
-        return strdup(matches[idx++].c_str());
-    }
-    return nullptr;
-}
-
-char **shell_completion(const char *text, int start, int end){
-    if(start == 0){
-        return rl_completion_matches(text,command_generator);
-    }
-    return nullptr;
-}
-
-std::string expand_env(const std::string &token){
-    if(token.empty() || token[0] != '$') return token;
-
-    if(token == "$?"){
-        return std::to_string(last_exit_status);
-    }
-
-    std::string var_name = token.substr(1);
-    const char *val = getenv(var_name.c_str());
-    return val ? std::string(val) : "";
-}
-
-std::string get_hisotry_path(){
-    const char *home = getenv("HOME");
-    if(!home) return ".shell_hisotry";
-    return std::string (home) + "/.shell_history";
-}
-
-std::unordered_map<std::string, std::string> aliases;
-
-void cmd_alias(const std::vector<std::string> &args){
-    if(args.size() < 2){
-        for(const auto &[name, value] : aliases){
-            std::cout << name << "='" << value << "'\n";
-        }
-        return;
-    }
-    std::string rest;
-    for(size_t i = 1; i < args.size(); i++){
-        rest += args[i];
-        if(i != args.size() - 1) rest += " ";
-    }
-    size_t eq = rest.find('=');
-    if(eq == std::string::npos){
-        std::cerr << "alias: invalid syntax\n";
-        return;
-    }
-    std::string name = rest.substr(0, eq);
-    std::string value = rest.substr(eq + 1);
-    aliases[name] = value;
-}
-
-void cmd_export(const std::vector<std::string> &args){
-    if(args.size() < 2){
-        std::cerr << "export: usage: export NAME=VALUE\n";
-        return;
-    }
-    std::string rest = args[1];
-    size_t eq = rest.find('=');
-    if(eq == std::string::npos){
-        std::cerr << "export: invalid syntax\n";
-        return;
-    }
-    std::string name = rest.substr(0, eq);
-    std::string value = rest.substr(eq + 1);
-    setenv(name.c_str(), value.c_str(), 1);
-}
-
-void cmd_echo(const std::vector<std::string> &args){
-    bool newline = true;
-    size_t start = 1;
-
-    if(args.size() > 1 && args[1] == "-n"){
-        newline = false;
-        start = 2;
-    }
-
-    for(size_t i = start; i < args.size(); i++){
-        std::cout << args[i];
-        if(i != args.size() - 1) std::cout << " ";
-    }
-    if(newline) std::cout << "\n";
-}
-
-void cmd_unset(const std::vector<std::string> &args){
-    if(args.size() < 2){
-        std::cerr << "unset: usage: unset NAME\n";
-        return;
-    }
-    unsetenv(args[1].c_str());
-}
-
-void cmd_whoami(){
-    const char *user = getenv("USER");
-    std::cout << (user ? user : "unknown") << "\n";
-}
-
-void run_external(std::vector<std::string> &args, std::vector<Job> &jobs){
-    bool background = false;
-    if(!args.empty() && args.back() == "&"){
-        background = true;
-        args.pop_back();
-    }
+void cmd_runExternal(std::vector<std::string> &args){
     Redirect r = parse_redirect(args);
-    std::vector<char *> argv;
+    std::vector<char*> argv;
     for(const auto &a: args){
-        argv.push_back(const_cast<char *>(a.c_str()));
+        argv.push_back(const_cast<char*>(a.c_str()));
     }
     argv.push_back(nullptr);
 
     pid_t pid = fork();
 
-    if(pid < 0) {std::cerr << "fork failed \n";}
+    if(pid < 0) {std::cerr << "fork failed \n"; }
 
     if(pid == 0){
-        setpgid(0, 0);
-        signal(SIGINT,SIG_DFL);
-        signal(SIGTSTP, SIG_DFL);
         apply_redirects(r);
-        execvp(argv[0],argv.data());
-        std::cerr << args[0] << "command not found";
+        execvp(argv[0], argv.data());
+        std::cerr << "command not found\n";
         _exit(127);
     }
 
-    else{
-        if(background){
-            Job j;
-            j.pid = pid;
-            j.command = args[0];
-            j.stopped = false;
-            jobs.push_back(j);
-            std::cout << "[" << jobs.size() << "]" << pid << "\n";
-        }
-        else{
-            setpgid(pid, pid);
-            tcsetpgrp(STDIN_FILENO, pid);
-        signal(SIGINT,SIG_IGN);
-        signal(SIGTSTP, SIG_IGN);
-        int status;
-        waitpid(pid, &status, WUNTRACED);
-
-        if(WIFEXITED(status)){
-            last_exit_status = WEXITSTATUS(status);
-        }
-
-        tcsetpgrp(STDIN_FILENO, getpid());
-
-        if(WIFSTOPPED(status)){
-            Job j;
-            j.pid = pid;
-            j.command = args[0];
-            j.stopped = true;
-            jobs.push_back(j);
-            std::cout << "\n[" << jobs.size() << "] stopped " << j.command << "\n";
-        }
-        signal(SIGINT,handle_sigint);
-        signal(SIGTSTP, SIG_IGN);
-    }
-    }
+    int status;
+    waitpid(pid, &status, 0);
 }
 
+
 int main(){
-    pid_t shell_pgid = getpid();
-
-    signal(SIGINT,handle_sigint);
-    setpgid(shell_pgid, shell_pgid);
-    tcsetpgrp(STDIN_FILENO, shell_pgid);  
-
-    signal(SIGTSTP, SIG_IGN);    
-    signal(SIGTTOU, SIG_IGN);    
-    signal(SIGTTIN, SIG_IGN);   
-    
-    std::string hisotry_path = get_hisotry_path();
-    rl_attempted_completion_function = shell_completion;
-    read_history(".shell_history");
-    stifle_history(1000); 
-
     std::string command;
-    std::vector<Job> jobs;
-    while(command != "quit" && command != "exit"){
-        std::string prompt = fetch_username() + fetch_branch() + " > ";
-        char *line = readline(prompt.c_str());
-        if(!line){
-            std::cout << "\n";
-            break;
-        }
-        command = line;
-        if(!command.empty())
-            add_history(line);
-        free(line);
+    while(command != "quit" && command != "exit"){ 
+        std::cout << fetch_path() << fetch_branch() <<  " > ";
+        std::getline(std::cin,command);
         if(command.empty())
             continue;
         std::vector<std::string> args = tokenizer(command);
-        if(args.empty()){
-            continue;
-        }
-        for(auto &a: args){
-            a = expand_env(a);
-        }
-        if(args[0] == "alias"){
-        cmd_alias(args);
-        continue;
-        }
-        if(args[0] == "export"){
-        cmd_export(args);
-        continue;
-        }
-        if(args[0] == "echo"){
-        cmd_echo(args);
-        continue;
-        }
-        if(args[0] == "unset"){
-        cmd_unset(args);
-        continue;
-        }
-        if(args[0] == "whoami"){
-        cmd_whoami();
-        continue;
-        }
-        if(aliases.count(args[0])){
-        std::vector<std::string> expanded = tokenizer(aliases[args[0]]);
-        args = expanded; 
-        }
-
-        if(args[0] == "cd"){
-            cmd_cd(args);
-            continue;
-        }
-        if(args[0] == "quit" || args[0] == "exit"){
-            break;
-        }
-        if(args[0] == "jobs") {cmd_jobs(jobs); continue;}
-        if(args[0] == "fg") {cmd_fg(jobs,args); continue;}
-        if(args[0] == "bg") {cmd_bg(jobs, args); continue;}
-
+        if(args[0].empty()) continue;  //check the whitespaces later
+        if(args[0] == "quit" || args[0] == "exit") break;
+        if(args[0] == "cd"){ cmd_cd(args); continue;}
         std::vector<std::vector<std::string>> commands = split_pipes(args);
         if(commands.size() == 1){
-            run_external(args, jobs);
+            cmd_runExternal(args);
             std::cout << "\n";
         }
         else{
@@ -571,6 +237,4 @@ int main(){
             std::cout << "\n";
         }
     }
-    write_history(hisotry_path.c_str());
-    return 0;
 }
