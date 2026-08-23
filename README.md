@@ -12,6 +12,10 @@ v0.0.0:
 - pipes & I/O redirections (`ls | grep .cpp | wc - l`) (`>`, `>>`, `<`)
 - git branch display in prompt
 
+## Progress
+
+-working on job control
+
 ## Build
 
 ```bash
