@@ -16,7 +16,6 @@
 #include <termios.h>
 #include <readline/readline.h>
 #include <readline/history.h>
-#include <csignal>
 
 namespace fs = std::filesystem;
 
@@ -136,12 +135,13 @@ std::vector<std::vector<std::string>> parse_pipeline(const std::vector<std::stri
             if(current.empty()){
                 std::cerr << "syntax error near unexpected token '|'\n";
                 return {};
-            }
+                }
                 commands.push_back(current);
                 current.clear();
                 continue;
-            }
+            }else{
             current.push_back(tok);
+            }
         }
     if(!current.empty())
         commands.push_back(current);
@@ -186,7 +186,6 @@ void run_pipeline(std::vector<std::vector<std::string>> &commands){
             std::cerr<< "command not found \n";
             _exit(127);
         }
-
         else{
             pids.push_back(pid);
             if(prev_read != -1) 
@@ -204,20 +203,20 @@ void run_pipeline(std::vector<std::vector<std::string>> &commands){
 }
 
     void handle_signal(int sig){
-           write(STDOUT_FILENO, "[handler fired]\n", 17);  // <-- remove this line
+            write(STDOUT_FILENO, "[handler fired]\n", 17);  
             get_sigint = 1;
     }
 
     int check_sigint(){
-    if(get_sigint){
-        get_sigint = 0;
+    if(get_sigint){ 
+        get_sigint = 0; 
         std::cout << "\n";
         std::cout.flush();
         rl_free_line_state();
-        rl_cleanup_after_signal();
-        rl_on_new_line();
-        rl_replace_line("", 0);
-        rl_redisplay();
+        rl_cleanup_after_signal(); 
+        rl_on_new_line(); 
+        rl_replace_line("", 0); 
+        rl_redisplay(); 
     }
     return 0;
 }
@@ -231,9 +230,9 @@ std::vector<Job> jobs;
 
 void cmd_jobs(){
     for(size_t i = 0; i < jobs.size(); i++){
-        std::cout << "[" << i + 1 << "]" << " "
-        << "±" << " " << "running" << "  "
-        << jobs[i].command << "\n" << std::endl; 
+        std::cout << "[" << i + 1 << "]" << " " << " ±  " 
+        << (jobs[i].stopped ? "suspended" : "running") << "   "
+        << jobs[i].command << "\n";
     }
 }
 
@@ -249,7 +248,7 @@ void cmd_fg(const std::vector<std::string> &args){
 
     std::cout << "[" << idx + 1 << "]" << "  " << "±" << " " << j.pid << " " << "continued" << " " << j.command << "\n";
     tcsetpgrp(STDIN_FILENO, j.pid);
-    kill(j.pid, SIGCONT);
+    kill(j.pid, SIGCONT);  
 
     int status;
     waitpid(j.pid, &status, WUNTRACED);
@@ -299,19 +298,19 @@ void run_external(std::vector<std::string> &args){
         std::cerr << "command not found \n";
         _exit(127);
     }
-    setpgid(pid, pid);
+    setpgid(pid, pid);  
     if(bg){
         jobs.push_back({pid,args[0],false});
         std::cout << "[" << jobs.size() << "]" << " " << pid << std::endl;
         return;
     }
-    tcsetpgrp(STDIN_FILENO, pid);
+    tcsetpgrp(STDIN_FILENO, pid); 
 
     int status;
-    waitpid(pid, &status, WUNTRACED);
-    tcsetpgrp(STDIN_FILENO, getpid());
+    waitpid(pid, &status, WUNTRACED); 
+    tcsetpgrp(STDIN_FILENO, getpid()); 
 
-    if(WIFSTOPPED(status)){
+    if(WIFSTOPPED(status)){  
         jobs.push_back({pid, args[0], true});
         std::cout << "\n[" << jobs.size() << "]  ±  " << pid <<  " suspended  " << args[0] << "\n";
     }
@@ -376,33 +375,33 @@ void display_matches_with_gap(char **matches, int num_matches, int max_length){
 }
 
 int main(){
-    struct sigaction sa;
-    sa.sa_handler = handle_signal;
-    sigemptyset(&sa.sa_mask);
+    struct sigaction sa;  
+    sa.sa_handler = handle_signal;  
+    sigemptyset(&sa.sa_mask);  
     sa.sa_flags = 0;     
 
     sigaction(SIGINT, &sa, nullptr);
 
-    rl_catch_signals = 0;
+    rl_catch_signals = 0; 
     rl_event_hook = check_sigint; 
 
-    pid_t shell_gpid = getpid();
-    setpgid(shell_gpid, shell_gpid);
+    pid_t shell_gpid = getpid(); 
+    setpgid(shell_gpid, shell_gpid); 
 
-    signal(SIGTTOU, SIG_IGN);
-    signal(SIGTTIN, SIG_IGN);
+    signal(SIGTTOU, SIG_IGN);   
+    signal(SIGTTIN, SIG_IGN); 
     signal(SIGTSTP, SIG_IGN);
 
     tcsetpgrp(STDIN_FILENO, shell_gpid);
     std::string command;
     rl_attempted_completion_function = shell_completion;
-    rl_variable_bind("show-all-if-ambiguous", "on");
-    rl_completion_query_items = -1;
+    rl_variable_bind("show-all-if-ambiguous", "on"); 
+    rl_completion_query_items = -1;// dont ask 
     rl_completion_display_matches_hook = display_matches_with_gap;  
     while(command != "quit" && command != "exit"){
         for(auto it = jobs.begin(); it !=jobs.end();){
             int status;
-            pid_t res = waitpid(it->pid, &status, WNOHANG);
+            pid_t res = waitpid(it->pid, &status, WNOHANG); 
             if(res > 0){
                 int job_num = std::distance(jobs.begin(), it) + 1;
                 std::cout << "[" << job_num << "]  ± " << it->pid << "done    " << it->command << "\n";
