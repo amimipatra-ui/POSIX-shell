@@ -1,5 +1,7 @@
+#include <cctype>
 #include <csignal>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -16,9 +18,10 @@
 #include <termios.h>
 #include <readline/readline.h>
 #include <readline/history.h>
+#include <glob.h>
 
 namespace fs = std::filesystem;
-
+int last_exit_status = 0;
 volatile sig_atomic_t get_sigint = 0;
 
 std::string fetch_path(){
@@ -63,10 +66,48 @@ std::string fetch_branch(){
 
 std::vector<std::string> tokenizer(const std::string &command){
     std::vector<std::string> args;
-    std::stringstream iss(command);
-    std::string tok;
-    while(iss >> tok)
-        args.push_back(tok);
+    std::string current;
+    bool in_token = false;
+    char quote_char = '\0';
+
+    for(size_t i = 0; i < command.size(); i++){
+        char c = command[i];
+
+        if(quote_char != '\0'){
+            if(c == quote_char){
+                quote_char = '\0';
+            }
+            else{
+                current += c;
+            }
+            continue;
+        }
+
+        if(c == '"' || c == '\''){
+            quote_char = c;
+            in_token = true;
+            continue;
+        }
+
+        if(c == '\\' && i + 1 < command.size()){
+            current += command[i + 1];
+            i++;
+            in_token = true;
+            continue;
+        }
+
+        if(std::isspace(static_cast<unsigned char>(c))){
+            if(in_token){
+                args.push_back(current);
+                current.clear();
+                in_token = false;
+            }
+            continue;
+        }
+        current += c;
+        in_token = true;
+    }
+    if(in_token) {args.push_back(current);}
     return args;
 }
 
@@ -203,7 +244,7 @@ void run_pipeline(std::vector<std::vector<std::string>> &commands){
 }
 
     void handle_signal(int sig){
-            write(STDOUT_FILENO, "[handler fired]\n", 17);  
+        // write(STDOUT_FILENO, "[handler fired]\n", 17);  
             get_sigint = 1;
     }
 
@@ -230,14 +271,14 @@ std::vector<Job> jobs;
 
 void cmd_jobs(){
     for(size_t i = 0; i < jobs.size(); i++){
-        std::cout << "[" << i + 1 << "]" << " " << " ±  " 
-        << (jobs[i].stopped ? "suspended" : "running") << "   "
+    std::cout << "[" << i + 1 << "]  ±  "
+        << (jobs[i].stopped ? "suspended" : "running") << "  "
         << jobs[i].command << "\n";
     }
 }
 
 void cmd_fg(const std::vector<std::string> &args){
-    if(jobs.empty()) {std::cerr << "fg: no such jobs \n"; return; }
+    if(jobs.empty()) {std::cerr << "fg: no current jobs \n"; return;}
 
     int idx = jobs.size() - 1;
     if(args.size() >= 2) idx = std::stoi(args[1]) - 1;
@@ -246,18 +287,18 @@ void cmd_fg(const std::vector<std::string> &args){
     Job j = jobs[idx];
     jobs.erase(jobs.begin() + idx);
 
-    std::cout << "[" << idx + 1 << "]" << "  " << "±" << " " << j.pid << " " << "continued" << " " << j.command << "\n";
+    std::cout << "[" << idx + 1 << "]  ±  " << j.pid << "  continued  " << j.command << "\n";
     tcsetpgrp(STDIN_FILENO, j.pid);
-    kill(j.pid, SIGCONT);  
+    kill(j.pid, SIGCONT);
 
     int status;
-    waitpid(j.pid, &status, WUNTRACED);
-    tcsetpgrp(STDIN_FILENO, getpid()); 
+    waitpid(j.pid,&status,WUNTRACED);
+    tcsetpgrp(STDIN_FILENO, getpid());
     if(WIFSTOPPED(status)){
     jobs.push_back({j.pid, j.command, true});
-    std::cout << "\n[" << idx + 1 << "]" << "  " << "±" << " " << j.pid << " " << "suspended" << " " << j.command << "\n" << std::endl;
-}
-    
+    std::cout << "\n[" << idx + 1 << "]  ±  " << j.pid << "  suspended  " << j.command << "\n";
+    }
+
 }
 void cmd_bg(const std::vector<std::string> &args){
     if(jobs.empty()) {std::cerr << "bg: no such jobs \n"; return;}
@@ -269,51 +310,7 @@ void cmd_bg(const std::vector<std::string> &args){
     jobs[idx].stopped = false;
     kill(jobs[idx].pid, SIGCONT);
 
-    std::cout << "[" << idx + 1 << "]" << "  " << "±" << " " << jobs[idx].pid << " "  "continued" << " " << jobs[idx].command << "\n" << std::endl;
-}
-
-void run_external(std::vector<std::string> &args){
-    bool bg = false;
-    if(!args.empty() && args.back() == "&"){
-        bg = true;
-        args.pop_back();
-    }
-    Redirect r = parse_redirects(args);
-    std::vector<char *> argv;
-    for(const auto &a: args){
-        argv.push_back(const_cast<char*>(a.c_str()));
-    }
-    argv.push_back(nullptr);
-
-    pid_t pid = fork();
-
-    if(pid < 0) {std::cerr << "fork failed \n"; return; }
-
-    if(pid == 0){
-        setpgid(0, 0);
-        signal(SIGINT, SIG_DFL);
-        signal(SIGTSTP, SIG_DFL);
-        apply_redirects(r);
-        execvp(argv[0], argv.data());
-        std::cerr << "command not found \n";
-        _exit(127);
-    }
-    setpgid(pid, pid);  
-    if(bg){
-        jobs.push_back({pid,args[0],false});
-        std::cout << "[" << jobs.size() << "]" << " " << pid << std::endl;
-        return;
-    }
-    tcsetpgrp(STDIN_FILENO, pid); 
-
-    int status;
-    waitpid(pid, &status, WUNTRACED); 
-    tcsetpgrp(STDIN_FILENO, getpid()); 
-
-    if(WIFSTOPPED(status)){  
-        jobs.push_back({pid, args[0], true});
-        std::cout << "\n[" << jobs.size() << "]  ±  " << pid <<  " suspended  " << args[0] << "\n";
-    }
+    std::cout << "[" << idx + 1 << "]  ±  " << jobs[idx].pid << "  continued  " << jobs[idx].command << "\n";
 }
 
 std::vector<std::string> get_executables(const std::string &prefix){
@@ -374,6 +371,89 @@ void display_matches_with_gap(char **matches, int num_matches, int max_length){
     rl_forced_update_display();                                
 }
 
+std::string expand_env(const std::string &token){
+    if(token.empty() || token[0] != '$') return token;
+
+    if(token == "$?"){
+        return std::to_string(last_exit_status);
+    }
+
+    std::string var = token.substr(1);
+    const char *val = getenv(var.c_str());
+    return val ? std::string(val) : "";
+}
+
+std::vector<std::string> expand_glob(const std::string &token){
+    if(token.find('*') == std::string::npos && token.find('?') == std::string::npos){
+        return {token};
+    }
+    glob_t glob_result;
+    int ret = glob(token.c_str(), GLOB_NOCHECK, nullptr, &glob_result);
+
+    std::vector<std::string> matches;
+    if(ret == 0){
+    for(size_t i = 0; i < glob_result.gl_pathc; i++){
+        matches.push_back(glob_result.gl_pathv[i]);
+    }
+    }
+    else{
+        matches.push_back(token);
+    }
+    globfree(&glob_result);
+    return matches;
+}
+
+void run_external(std::vector<std::string> &args){
+    bool bg = false;
+    if(!args.empty() && args.back() == "&"){
+        bg = true;
+        args.pop_back();
+    }
+    Redirect r = parse_redirects(args);
+    std::vector<char *> argv;
+    for(const auto &a: args){
+        argv.push_back(const_cast<char*>(a.c_str()));
+    }
+    argv.push_back(nullptr);
+
+    pid_t pid = fork();
+
+    if(pid < 0) {std::cerr << "fork failed \n"; return; }
+
+    if(pid == 0){
+        setpgid(0, 0);
+        signal(SIGINT, SIG_DFL);
+        signal(SIGTSTP, SIG_DFL);
+        apply_redirects(r);
+        execvp(argv[0], argv.data());
+        std::cerr << "command not found \n";
+        _exit(127);
+    }
+    setpgid(pid, pid);  
+    if(bg){
+        jobs.push_back({pid,args[0],false});
+        std::cout << "[" << jobs.size() << "]  ±  " << pid << "\n";
+        return;
+    }
+    tcsetpgrp(STDIN_FILENO, pid); 
+
+    int status;
+    waitpid(pid, &status, WUNTRACED); 
+    tcsetpgrp(STDIN_FILENO, getpid()); 
+
+    if(WIFEXITED(status)){
+        last_exit_status = WEXITSTATUS(status);
+    }
+
+    if(WIFSTOPPED(status)){  
+        jobs.push_back({pid, args[0], true});
+        std::cout << "\n[" << jobs.size() << "]  ±  " << pid << "  suspended  " << args[0] << "\n";
+    }
+    else if(WIFSIGNALED(status)){
+        last_exit_status = 128 + WTERMSIG(status);
+    }
+}
+
 int main(){
     struct sigaction sa;  
     sa.sa_handler = handle_signal;  
@@ -404,8 +484,8 @@ int main(){
             pid_t res = waitpid(it->pid, &status, WNOHANG); 
             if(res > 0){
                 int job_num = std::distance(jobs.begin(), it) + 1;
-                std::cout << "[" << job_num << "]  ± " << it->pid << "done    " << it->command << "\n";
-                it = jobs.erase(it);
+            std::cout << "[" << job_num << "]  ±  " << it->pid << "  done  " << it->command << "\n";
+            it = jobs.erase(it);
             }else{
                 ++it;
             }
@@ -423,6 +503,16 @@ int main(){
         if(command.empty()) continue;
         std::vector<std::string> args = tokenizer(command);
         if(args.empty()) continue;
+        for(auto &a: args){
+            a = expand_env(a);
+        }
+        std::vector<std::string> expanded_args;
+        for(const auto &a : args){
+        auto matches = expand_glob(a);
+        expanded_args.insert(expanded_args.end(), matches.begin(), matches.end());
+        }
+        args = expanded_args;
+
         if(args[0] == "exit" || args[0] == "quit") break;
         if(args[0] == "cd"){
             cmd_cd(args);
