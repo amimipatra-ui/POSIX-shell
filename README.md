@@ -21,6 +21,8 @@ ever implement themselves.
 - Process groups + terminal ownership (`setpgid`, `tcsetpgrp`) for job control
 - Readline integration: command history, line editing, tab completion (builtins + `$PATH`)
 - Git-aware prompt (shows current branch)
+- Variable expansion , exit status tracking matching real shell conventions (`128 + signal`)
+- Glob expamsion via `glob()` API
 
 ## Demo
 
