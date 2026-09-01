@@ -19,6 +19,9 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 #include <glob.h>
+#include <unordered_map>
+
+std::unordered_map<std::string, std::string> aliases;
 
 namespace fs = std::filesystem;
 int last_exit_status = 0;
@@ -403,6 +406,45 @@ std::vector<std::string> expand_glob(const std::string &token){
     return matches;
 }
 
+void cmd_alias(const std::vector<std::string> &args){
+    if(args.size() < 2){
+        for(const auto &[k,v]: aliases)
+        std::cout << "alias " << k << "=" << v << "\n";
+    return;
+    }
+
+    std::string joined = args[1];
+    for(size_t i = 2; i < args.size(); i++) joined += " " + args[i];
+    
+    size_t eq = joined.find('=');
+    if(eq == std::string::npos){
+        auto it = aliases.find(joined);
+        if(it != aliases.end())
+            std::cout << "alias " << it->first << "=" << it->second << "'\n" << std::endl;
+        else
+            std::cerr << "allias: " << joined << " not found\n" << std::endl;
+        return;
+    }
+    std::string name = joined.substr(0,eq);
+    std::string value = joined.substr(eq + 1);
+    aliases[name] = value;
+}
+
+void cmd_unaliase(const std::vector<std::string> &args){
+    if(args.size() < 2) {std::cerr << "unalias usgae: unalias name \n"; return;}
+    aliases.erase(args[1]);
+}
+
+void expand_alias(std::vector<std::string> &args){
+    if(args.empty()) return;
+    auto it = aliases.find(args[0]);
+    if(it == aliases.end()) return;
+
+    std::vector<std::string> alias_token = tokenizer(it -> second);
+    std::vector<std::string> new_args = alias_token;
+    new_args.insert(new_args.end(), args.begin() + 1, args.end());
+    args = new_args;
+}
 void run_external(std::vector<std::string> &args){
     bool bg = false;
     if(!args.empty() && args.back() == "&"){
@@ -503,6 +545,7 @@ int main(){
         if(command.empty()) continue;
         std::vector<std::string> args = tokenizer(command);
         if(args.empty()) continue;
+        expand_alias(args);
         for(auto &a: args){
             a = expand_env(a);
         }
@@ -521,6 +564,8 @@ int main(){
         if(args[0] == "jobs"){cmd_jobs(); continue; }
         if(args[0] == "fg"){cmd_fg(args); continue; }
         if(args[0] == "bg"){cmd_bg(args); continue;}
+        if(args[0] == "alias"){cmd_alias(args);continue;}
+        if(args[0] == "unalias"){cmd_unaliase(args); continue;}
         std::vector<std::vector<std::string>> commands = parse_pipeline(args);
         if(commands.size() == 1){
             run_external(args);
