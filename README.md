@@ -24,6 +24,7 @@ ever implement themselves.
 - Quotting escaping
 - Variable expansion , exit status tracking matching real shell conventions (`128 + signal`)
 - Glob expamsion via `glob()` API
+- Alias/Unalias support
 
 ## Demo
 
