@@ -25,6 +25,7 @@ ever implement themselves.
 - Variable expansion , exit status tracking matching real shell conventions (`128 + signal`)
 - Glob expamsion via `glob()` API
 - Alias/Unalias support
+- Chaining
 
 ## Demo
 
