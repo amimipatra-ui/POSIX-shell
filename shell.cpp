@@ -198,6 +198,7 @@ void run_pipeline(std::vector<std::vector<std::string>> &commands){
     int fd[2];
     
     std::vector<pid_t> pids;
+    pid_t pgid = 0;
 
     for(int i = 0; i < num; i++){
         pipe(fd);
@@ -207,6 +208,10 @@ void run_pipeline(std::vector<std::vector<std::string>> &commands){
         if(pid < 0) {std::cerr << "fork failed";}
 
         if(pid == 0){
+            if(pgid == 0) setpgid(0, 0);
+            else setpgid(0, pgid);
+            signal(SIGINT, SIG_DFL);   
+            signal(SIGTSTP, SIG_DFL);
             if(prev_read != -1){
                 dup2(prev_read, 0);
                 close(prev_read);
@@ -231,6 +236,9 @@ void run_pipeline(std::vector<std::vector<std::string>> &commands){
             _exit(127);
         }
         else{
+            if(pgid == 0) pgid = pid;
+            setpgid(pid, pgid);
+
             pids.push_back(pid);
             if(prev_read != -1) 
                     close(prev_read);
@@ -240,10 +248,21 @@ void run_pipeline(std::vector<std::vector<std::string>> &commands){
         }
 
         if(prev_read != -1) close(prev_read);
-        for(pid_t pid: pids){
-            int status;
-        waitpid(pid, &status, 0);
+        tcsetpgrp(STDIN_FILENO, pgid);
+
+        for(size_t i = 0; i < pids.size(); i++){
+        int status;
+        waitpid(pids[i], &status, 0);
+        if(i == pids.size() - 1){
+        if(WIFEXITED(status)){
+            last_exit_status = WEXITSTATUS(status);
+        }
+        else if(WIFSIGNALED(status)){
+            last_exit_status = 128 + WTERMSIG(status);
+        }
     }
+}
+tcsetpgrp(STDIN_FILENO, getpid());
 }
 
     void handle_signal(int sig){
@@ -445,6 +464,40 @@ void expand_alias(std::vector<std::string> &args){
     new_args.insert(new_args.end(), args.begin() + 1, args.end());
     args = new_args;
 }
+
+struct ChainSegment{
+    std::vector<std::string> tokens;
+    std::string op;
+};
+
+std::vector<ChainSegment> parse_chain(const std::vector<std::string> &args){
+    std::vector<ChainSegment> segments;
+    std::vector<std::string> current;
+
+    for(size_t i = 0; i < args.size(); i++){
+        const std::string &tok = args[i];
+        if(tok == "&&" || tok == "||" || tok == ";"){
+            if(current.empty()){
+                std::cerr << "syntax error near unexpected token " << tok << "\n";
+                return {};
+            }
+            segments.push_back({current, tok});
+            current.clear();
+        }
+        else{
+            current.push_back(tok);
+        }
+    }
+    if(!current.empty()){
+        segments.push_back({current, ""});
+    }
+    else if(!segments.empty()){
+        std::cerr << "syntax error: trailing operator \n";
+        return {};
+    }
+    return segments;
+}
+
 void run_external(std::vector<std::string> &args){
     bool bg = false;
     if(!args.empty() && args.back() == "&"){
@@ -566,14 +619,23 @@ int main(){
         if(args[0] == "bg"){cmd_bg(args); continue;}
         if(args[0] == "alias"){cmd_alias(args);continue;}
         if(args[0] == "unalias"){cmd_unaliase(args); continue;}
-        std::vector<std::vector<std::string>> commands = parse_pipeline(args);
-        if(commands.size() == 1){
-            run_external(args);
-            std::cout << "\n";
-        }
-        else{
-            run_pipeline(commands);
-            std::cout << "\n";
-        }
+        std::vector<ChainSegment> chain = parse_chain(args);
+        bool should_run = true;
+
+        for(const auto &seg : chain){
+        if(!should_run){
+        should_run = true;
+        continue;
+    }
+    std::vector<std::vector<std::string>> commands = parse_pipeline(seg.tokens);
+    if(commands.empty()) continue;
+
+    std::vector<std::string> seg_args = seg.tokens;
+    if(commands.size() == 1){run_external(seg_args);}
+    else{ run_pipeline(commands);}
+    if(seg.op == "&&" && last_exit_status != 0){ should_run = false;}
+    else if(seg.op == "||" && last_exit_status == 0){ should_run = false;}
+}
+    std::cout << std::endl;
     }
 }
