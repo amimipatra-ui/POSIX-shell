@@ -1,1 +1,2 @@
 -std=c++17
+-I/opt/homebrew/opt/readline/include
