@@ -267,7 +267,6 @@ tcsetpgrp(STDIN_FILENO, getpid());
 }
 
     void handle_signal(int sig){
-        // write(STDOUT_FILENO, "[handler fired]\n", 17);  
             get_sigint = 1;
     }
 
