@@ -23,10 +23,11 @@
 
 
 std::unordered_map<std::string, std::string> aliases;
+std::unordered_map<std::string, std::string> shell_vars;
 
 namespace fs = std::filesystem;
 int last_exit_status = 0;
-volatile sig_atomic_t get_sigint = 0;
+volatile sig_atomic_t get_sigint = 0; 
 
 std::string fetch_path(){
     fs::path current_path = fs::current_path();
@@ -199,7 +200,7 @@ void run_pipeline(std::vector<std::vector<std::string>> &commands){
     int fd[2];
     
     std::vector<pid_t> pids;
-    pid_t pgid = 0;
+    pid_t pgid = 0; // process group id for whole pipeline 
 
     for(int i = 0; i < num; i++){
         pipe(fd);
@@ -266,7 +267,7 @@ void run_pipeline(std::vector<std::vector<std::string>> &commands){
 tcsetpgrp(STDIN_FILENO, getpid());
 }
 
-    void handle_signal(int sig){
+    void handle_signal(int sig){ 
             get_sigint = 1;
     }
 
@@ -275,9 +276,9 @@ tcsetpgrp(STDIN_FILENO, getpid());
         get_sigint = 0; 
         std::cout << "\n";
         std::cout.flush();
-        rl_free_line_state();
-        rl_cleanup_after_signal(); 
-        rl_on_new_line(); 
+        rl_free_line_state();  
+        rl_cleanup_after_signal();   
+        rl_on_new_line();  
         rl_replace_line("", 0); 
         rl_redisplay(); 
     }
@@ -300,10 +301,10 @@ void cmd_jobs(){
 }
 
 void cmd_fg(const std::vector<std::string> &args){
-    if(jobs.empty()) {std::cerr << "fg: no current jobs \n"; return;}
+    if(jobs.empty()){std::cerr << "fg; no current jobs \n"; return;}
 
     int idx = jobs.size() - 1;
-    if(args.size() >= 2) idx = std::stoi(args[1]) - 1;
+    if(args.size() >= 2){idx = std::stoi(args[1]) - 1;}
     if(idx < 0 || idx >= (int)jobs.size()) {std::cerr << "fg: no such jobs \n"; return;}
 
     Job j = jobs[idx];
@@ -318,7 +319,7 @@ void cmd_fg(const std::vector<std::string> &args){
     tcsetpgrp(STDIN_FILENO, getpid());
     if(WIFSTOPPED(status)){
     jobs.push_back({j.pid, j.command, true});
-    std::cout << "\n[" << idx + 1 << "]  ±  " << j.pid << "  suspended  " << j.command << "\n";
+    std::cout << "[" << idx + 1 << "]  ±  " << j.pid << "  suspended  " << j.command << "\n";
     }
 
 }
@@ -401,6 +402,9 @@ std::string expand_env(const std::string &token){
     }
 
     std::string var = token.substr(1);
+    auto it = shell_vars.find(var);
+    if(it != shell_vars.end()) return it->second;
+
     const char *val = getenv(var.c_str());
     return val ? std::string(val) : "";
 }
@@ -439,7 +443,7 @@ void cmd_alias(const std::vector<std::string> &args){
     if(eq == std::string::npos){
         auto it = aliases.find(joined);
         if(it != aliases.end())
-            std::cout << "alias " << it->first << "=" << it->second << "'\n" << std::endl;
+            std::cout << "alias " << it->first << "=" << it->second << "\n" << std::endl;
         else
             std::cerr << "allias: " << joined << " not found\n" << std::endl;
         return;
@@ -498,6 +502,18 @@ std::vector<ChainSegment> parse_chain(const std::vector<std::string> &args){
     return segments;
 }
 
+bool try_assign_var(const std::string &token){
+    size_t eq = token.find('=');
+    if(eq == std::string::npos || eq == 0) return false;
+    std::string name = token.substr(0, eq);
+    for(char c : name){
+        if(!isalnum((unsigned char)c) && c != '_') return false;
+    }
+    std::string value = token.substr(eq + 1);
+    shell_vars[name] = value;
+    return true;
+}
+
 void run_external(std::vector<std::string> &args){
     bool bg = false;
     if(!args.empty() && args.back() == "&"){
@@ -521,14 +537,14 @@ void run_external(std::vector<std::string> &args){
         signal(SIGTSTP, SIG_DFL);
         apply_redirects(r);
         execvp(argv[0], argv.data());
-        std::cerr << "command not found \n";
+        std::cerr << "command not found ";
         _exit(127);
     }
     setpgid(pid, pid);  
     if(bg){
-        jobs.push_back({pid,args[0],false});
-        std::cout << "[" << jobs.size() << "]  ±  " << pid << "\n";
-        return;
+        jobs.push_back({pid, args[0], false});
+        std::cout << " [" << jobs.size() << "] " << pid << std::endl;
+        return; 
     }
     tcsetpgrp(STDIN_FILENO, pid); 
 
@@ -537,42 +553,136 @@ void run_external(std::vector<std::string> &args){
     tcsetpgrp(STDIN_FILENO, getpid()); 
 
     if(WIFEXITED(status)){
-        last_exit_status = WEXITSTATUS(status);
+    last_exit_status = WEXITSTATUS(status);
     }
 
-    if(WIFSTOPPED(status)){  
+    if(WIFSTOPPED(status)){
         jobs.push_back({pid, args[0], true});
-        std::cout << "\n[" << jobs.size() << "]  ±  " << pid << "  suspended  " << args[0] << "\n";
+        std::cout << "[" << jobs.size() << "]  ±  "
+        << pid << "  " << "suspended" << "  " << args[0] << "\n";
     }
     else if(WIFSIGNALED(status)){
         last_exit_status = 128 + WTERMSIG(status);
     }
 }
 
+void run_if(std::vector<std::string> &condition_args);
+void run_for(std::vector<std::string> &header_args);
+
+void run_line(std::vector<std::string> args){
+    if(args.empty()) return;
+    if(try_assign_var(args[0]) && args.size() == 1) return;
+
+    expand_alias(args);
+    for(auto &a : args) a = expand_env(a);
+
+    std::vector<std::string> expanded_args;
+    for(const auto &a : args){
+        auto matches = expand_glob(a);
+        expanded_args.insert(expanded_args.end(), matches.begin(), matches.end());
+    }
+    args = expanded_args;
+    if(args.empty()) return;
+
+    if(args[0] == "cd"){ cmd_cd(args); return; }
+    if(args[0] == "jobs"){ cmd_jobs(); return; }
+    if(args[0] == "fg"){ cmd_fg(args); return; }
+    if(args[0] == "bg"){ cmd_bg(args); return; }
+    if(args[0] == "alias"){ cmd_alias(args); return; }
+    if(args[0] == "unalias"){ cmd_unaliase(args); return; }
+
+    std::vector<ChainSegment> chain = parse_chain(args);
+    bool should_run = true;
+    for(const auto &seg : chain){
+        if(!should_run){ should_run = true; continue; }
+        std::vector<std::vector<std::string>> commands = parse_pipeline(seg.tokens);
+        if(commands.empty()) continue;
+        std::vector<std::string> seg_args = seg.tokens;
+        if(commands.size() == 1) run_external(seg_args);
+        else run_pipeline(commands);
+        if(seg.op == "&&" && last_exit_status != 0) should_run = false;
+        else if(seg.op == "||" && last_exit_status == 0) should_run = false;
+    }
+}
+
+std::vector<std::string> read_block(const std::string &end_keyword){
+    std::vector<std::string> lines;
+    while(true){
+        char *line = readline("> ");
+        if(!line) break;
+        std::string l = line;
+        free(line);
+        if(l == end_keyword) break;
+        lines.push_back(l);
+    }
+    return lines;
+}
+
+void run_if(std::vector<std::string> &condition_args){
+    std::vector<std::string> body = read_block("fi");
+
+    std::vector<std::string> then_lines, else_lines;
+    bool in_else = false;
+    for(const auto &l : body){
+        if(l == "else"){ in_else = true; continue; }
+        if(in_else) else_lines.push_back(l);
+        else then_lines.push_back(l);
+    }
+
+    run_line(condition_args);
+    bool condition_true = (last_exit_status == 0);
+
+    const auto &chosen = condition_true ? then_lines : else_lines;
+    for(const auto &l : chosen){
+        std::vector<std::string> toks = tokenizer(l);
+        run_line(toks);
+    }
+}
+
+void run_for(std::vector<std::string> &header_args){
+    // header_args = ["for", "x", "in", "a", "b", "c"]
+    if(header_args.size() < 4 || header_args[2] != "in"){
+        std::cerr << "for: syntax error, expected: for VAR in LIST\n";
+        return;
+    }
+    std::string var_name = header_args[1];
+    std::vector<std::string> items(header_args.begin() + 3, header_args.end());
+
+    std::vector<std::string> body = read_block("done");
+
+    for(const auto &item : items){
+        shell_vars[var_name] = item;
+        for(const auto &l : body){
+            std::vector<std::string> toks = tokenizer(l);
+            run_line(toks);
+        }
+    }
+}
+
 int main(){
-    struct sigaction sa;  
-    sa.sa_handler = handle_signal;  
-    sigemptyset(&sa.sa_mask);  
-    sa.sa_flags = 0;     
+    struct sigaction sa;
+    sa.sa_handler = handle_signal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
 
     sigaction(SIGINT, &sa, nullptr);
 
-    rl_catch_signals = 0; 
-    rl_event_hook = check_sigint; 
+    rl_catch_signals = 0;
+    rl_event_hook = check_sigint;
 
-    pid_t shell_gpid = getpid(); 
-    setpgid(shell_gpid, shell_gpid); 
+    pid_t shell_pid = getpid();
+    setpgid(shell_pid, shell_pid);
 
-    signal(SIGTTOU, SIG_IGN);   
-    signal(SIGTTIN, SIG_IGN); 
+    signal(SIGTTOU, SIG_IGN);
+    signal(SIGTTIN, SIG_IGN);
     signal(SIGTSTP, SIG_IGN);
 
-    tcsetpgrp(STDIN_FILENO, shell_gpid);
+    tcsetpgrp(STDIN_FILENO, shell_pid);
     std::string command;
     rl_attempted_completion_function = shell_completion;
-    rl_variable_bind("show-all-if-ambiguous", "on"); 
-    rl_completion_query_items = -1;// dont ask 
-    rl_completion_display_matches_hook = display_matches_with_gap;  
+    rl_variable_bind("show-all-if-ambiguous", "on");
+    rl_completion_query_items = -1;
+    rl_completion_display_matches_hook = display_matches_with_gap;
     while(command != "quit" && command != "exit"){
         for(auto it = jobs.begin(); it !=jobs.end();){
             int status;
@@ -585,7 +695,7 @@ int main(){
                 ++it;
             }
         }
-        std::string prompt = fetch_path() + fetch_branch() + " >  ";
+        std::string prompt = "\n" + fetch_path() + fetch_branch() + " > ";
         char *line = readline(prompt.c_str());
         if(!line){
             std::cout << "\n";
@@ -598,44 +708,8 @@ int main(){
         if(command.empty()) continue;
         std::vector<std::string> args = tokenizer(command);
         if(args.empty()) continue;
-        expand_alias(args);
-        for(auto &a: args){
-            a = expand_env(a);
-        }
-        std::vector<std::string> expanded_args;
-        for(const auto &a : args){
-        auto matches = expand_glob(a);
-        expanded_args.insert(expanded_args.end(), matches.begin(), matches.end());
-        }
-        args = expanded_args;
-
         if(args[0] == "exit" || args[0] == "quit") break;
-        if(args[0] == "cd"){
-            cmd_cd(args);
-            continue;
-        }
-        if(args[0] == "jobs"){cmd_jobs(); continue; }
-        if(args[0] == "fg"){cmd_fg(args); continue; }
-        if(args[0] == "bg"){cmd_bg(args); continue;}
-        if(args[0] == "alias"){cmd_alias(args);continue;}
-        if(args[0] == "unalias"){cmd_unaliase(args); continue;}
-        std::vector<ChainSegment> chain = parse_chain(args);
-        bool should_run = true;
-
-        for(const auto &seg : chain){
-        if(!should_run){
-        should_run = true;
-        continue;
+        run_line(args);
     }
-    std::vector<std::vector<std::string>> commands = parse_pipeline(seg.tokens);
-    if(commands.empty()) continue;
-
-    std::vector<std::string> seg_args = seg.tokens;
-    if(commands.size() == 1){run_external(seg_args);}
-    else{ run_pipeline(commands);}
-    if(seg.op == "&&" && last_exit_status != 0){ should_run = false;}
-    else if(seg.op == "||" && last_exit_status == 0){ should_run = false;}
-}
-    std::cout << std::endl;
-    }
+    return 0;
 }
