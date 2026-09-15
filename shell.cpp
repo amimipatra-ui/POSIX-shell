@@ -537,7 +537,7 @@ void run_external(std::vector<std::string> &args){
         signal(SIGTSTP, SIG_DFL);
         apply_redirects(r);
         execvp(argv[0], argv.data());
-        std::cerr << "command not found ";
+        std::cerr << "command not found " << "\n";
         _exit(127);
     }
     setpgid(pid, pid);  
@@ -695,7 +695,7 @@ int main(){
                 ++it;
             }
         }
-        std::string prompt = "\n" + fetch_path() + fetch_branch() + " > ";
+        std::string prompt = "\n" + fetch_path() + fetch_branch() + "  >   ";
         char *line = readline(prompt.c_str());
         if(!line){
             std::cout << "\n";
