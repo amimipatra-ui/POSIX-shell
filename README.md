@@ -1,75 +1,56 @@
 # POSIX shell
 
+A POSIX-style shell written from scratch in C++17. Process management, job control, and line editing are built directly on Unix syscalls — no shell libraries.
+
 ![demo](output.gif)
 
-```
-┌──────────────────────────────────────────────────────────┐
-│ POSIX SHELL                                              │
-│ ──────────────────────────────────────────────────────── │
-│ a POSIX-style shell written from scratch in C++17 —      │
-│ process management, job control, and line editing        │
-│ built directly on Unix syscalls, no shell libraries      │
-│ used.                                                    │
-└──────────────────────────────────────────────────────────┘
+## Features
+
+**Execution**
+
+- `fork()` / `execvp()` command execution
+- Pipelines — `ls | grep .cpp | wc -l`
+- Redirection — `>`, `>>`, `<`
+- Glob expansion via `glob()`
+- Quoting and escaping
+- Command chaining
+
+**Job control**
+
+- Background execution with `&`, plus `jobs`, `fg`, `bg`
+- `Ctrl+Z` suspend and resume
+- `Ctrl+C` kills the foreground job, not the shell
+- Process groups and terminal ownership (`setpgid`, `tcsetpgrp`)
+
+**Shell environment**
+
+- Variables — `var=value`, `$var` expansion, `export`
+- Exit status tracking, including the `128+signal` convention
+- `alias` / `unalias`
+- Basic scripting: control flow and running script files
+
+**Line editing**
+
+- readline integration: history, editing, tab completion over builtins and `$PATH`
+- Git-aware prompt showing the current branch
+
+## Build
+
+Requires GNU readline (not the macOS-default libedit).
+
+```sh
+brew install readline
+
+clang++ -std=c++17 \
+  -I/opt/homebrew/opt/readline/include \
+  -L/opt/homebrew/opt/readline/lib \
+  -lreadline shell.cpp -o shell
+
+./shell
 ```
 
-```
-┌──────────────────────────────────────────────────────────┐
-│ FEATURES                                                 │
-│ ──────────────────────────────────────────────────────── │
-│ - command execution via fork() / execvp()                │
-│ - pipelines (ls | grep .cpp | wc -l)                     │
-│ - i/o redirection (>, >>, <)                             │
-│ - job control: bg execution (&), jobs, fg, bg            │
-│ - Ctrl+Z suspend/resume                                  │
-│ - correct signal handling — Ctrl+C kills the             │
-│   foreground job without killing the shell               │
-│ - process groups + terminal ownership                    │
-│   (setpgid, tcsetpgrp) for job control                   │
-│ - readline integration: history, line editing,           │
-│   tab completion (builtins + $PATH)                      │
-│ - git-aware prompt (shows current branch)                │
-│ - quote handling and escaping                            │
-│ - variable expansion, exit status tracking               │
-│   matching real shell conventions (128+signal)           │
-│ - glob expansion via the glob() API                      │
-│ - alias / unalias support                                │
-│ - command chaining                                       │
-│ - shell variables (var=value, $var expansion,            │
-│   export for environment variables)                      │
-│ - basic scripting: control flow and running              │
-│   shell script files                                     │
-└──────────────────────────────────────────────────────────┘
-```
+Or with the included Makefile:
 
-```
-┌──────────────────────────────────────────────────────────┐
-│ BUILD                                                    │
-│ ──────────────────────────────────────────────────────── │
-│ requires GNU readline                                    │
-│ (not the macOS-default libedit)                          │
-│                                                          │
-│ $ brew install readline   # macOS only                   │
-│                                                          │
-│ $ clang++ -std=c++17 \                                   │
-│     -I/opt/homebrew/opt/readline/include \               │
-│     -L/opt/homebrew/opt/readline/lib \                   │
-│     -lreadline shell.cpp -o shell                        │
-│                                                          │
-│ $ ./shell                                                │
-│                                                          │
-│ # or, using the included Makefile:                       │
-│ $ make run                                               │
-└──────────────────────────────────────────────────────────┘
-```
-
-```
-┌──────────────────────────────────────────────────────────┐
-│ USAGE                                                    │
-│ ──────────────────────────────────────────────────────── │
-│ $ sleep 100 &   # run in background                      │
-│ $ jobs          # list background/stopped jobs           │
-│ $ fg            # bring most recent job to fg            │
-│ $ bg            # resume a stopped job in bg             │
-└──────────────────────────────────────────────────────────┘
+```sh
+make run
 ```
