@@ -21,6 +21,8 @@
 #include <glob.h>
 #include <unordered_map>
 
+#include "visuals.hpp"
+
 
 std::unordered_map<std::string, std::string> aliases;
 std::unordered_map<std::string, std::string> shell_vars;
@@ -31,6 +33,18 @@ volatile sig_atomic_t get_sigint = 0;
 
 std::string fetch_path(){
     fs::path current_path = fs::current_path();
+    const char *home_env = getenv("HOME");
+    fs::path home_path = home_env ? fs::path(home_env) : fs::path();
+    if(!home_path.empty()){
+        auto rel = fs::relative(current_path, home_path);
+        std::string rel_str = rel.string();
+        if(rel_str.substr(0, 2) != ".."){
+            if(rel_str == "."){
+                return "~";   
+            }
+            return "~/" + rel_str;
+        }
+    }
     fs::path chopped_path;
     int count = 0;
     for(const auto &path: current_path){
@@ -319,7 +333,7 @@ void cmd_fg(const std::vector<std::string> &args){
     tcsetpgrp(STDIN_FILENO, getpid());
     if(WIFSTOPPED(status)){
     jobs.push_back({j.pid, j.command, true});
-    std::cout << "[" << idx + 1 << "]  ±  " << j.pid << "  suspended  " << j.command << "\n";
+    std::cout << "\n[" << idx + 1 << "]  ±  " << j.pid << "  suspended  " << j.command << "\n";
     }
 
 }
@@ -395,18 +409,35 @@ void display_matches_with_gap(char **matches, int num_matches, int max_length){
 }
 
 std::string expand_env(const std::string &token){
-    if(token.empty() || token[0] != '$') return token;
-
-    if(token == "$?"){
-        return std::to_string(last_exit_status);
+    std::string result;
+    for(size_t i = 0; i < token.size(); i++){
+        if(token[i] == '$' && i + 1 < token.size()){
+            if(token[i+1] == '?'){
+                result += std::to_string(last_exit_status);
+                i++;
+                continue;
+            }
+            size_t j = i + 1;
+            std::string var_name;
+            while(j < token.size() && (isalnum((unsigned char)token[j]) || token[j] == '_')){
+                var_name += token[j];
+                j++;
+            }
+            if(!var_name.empty()){
+                auto it = shell_vars.find(var_name);
+                if(it != shell_vars.end()){
+                    result += it->second;
+                } else {
+                    const char *val = getenv(var_name.c_str());
+                    if(val) result += val;
+                }
+                i = j - 1;   
+                continue;
+            }
+        }
+        result += token[i];
     }
-
-    std::string var = token.substr(1);
-    auto it = shell_vars.find(var);
-    if(it != shell_vars.end()) return it->second;
-
-    const char *val = getenv(var.c_str());
-    return val ? std::string(val) : "";
+    return result;
 }
 
 std::vector<std::string> expand_glob(const std::string &token){
@@ -558,7 +589,7 @@ void run_external(std::vector<std::string> &args){
 
     if(WIFSTOPPED(status)){
         jobs.push_back({pid, args[0], true});
-        std::cout << "[" << jobs.size() << "]  ±  "
+        std::cout << "\n[" << jobs.size() << "]  ±  "
         << pid << "  " << "suspended" << "  " << args[0] << "\n";
     }
     else if(WIFSIGNALED(status)){
@@ -569,10 +600,22 @@ void run_external(std::vector<std::string> &args){
 void run_if(std::vector<std::string> &condition_args);
 void run_for(std::vector<std::string> &header_args);
 
+bool looks_like_assignment(const std::string &token){
+    size_t eq = token.find('=');
+    if(eq == std::string::npos || eq == 0) return false;
+    std::string name = token.substr(0, eq);
+    for(char c : name){
+        if(!isalnum((unsigned char)c) && c != '_') return false;
+    }
+    return true;
+}
+
 void run_line(std::vector<std::string> args){
     if(args.empty()) return;
-    if(try_assign_var(args[0]) && args.size() == 1) return;
-
+    if(args.size() == 1 && looks_like_assignment(args[0])){
+        try_assign_var(args[0]);
+        return;
+    }
     expand_alias(args);
     for(auto &a : args) a = expand_env(a);
 
@@ -678,6 +721,7 @@ int main(){
     signal(SIGTSTP, SIG_IGN);
 
     tcsetpgrp(STDIN_FILENO, shell_pid);
+    print_splash();
     std::string command;
     rl_attempted_completion_function = shell_completion;
     rl_variable_bind("show-all-if-ambiguous", "on");
@@ -695,7 +739,7 @@ int main(){
                 ++it;
             }
         }
-        std::string prompt = "\n" + fetch_path() + fetch_branch() + "  >   ";
+        std::string prompt = build_prompt(fetch_path(), fetch_branch(), last_exit_status);
         char *line = readline(prompt.c_str());
         if(!line){
             std::cout << "\n";
