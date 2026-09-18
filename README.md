@@ -2,7 +2,7 @@
 
 A POSIX-style shell written from scratch in C++17. Process management, job control, and line editing are built directly on Unix syscalls — no shell libraries.
 
-![demo](output.gif)
+![demo](output1.gif)
 
 ## Features
 
